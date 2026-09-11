@@ -1,7 +1,11 @@
 # Phase 2 — SQLite Index Track (Design)
 
 Date: 2026-09-11
-Status: approved in chat (index track selected over quick-wins / full-phase-2 / sessions+auth)
+Status: implemented (commit series through d65d6d9); design deviation: the index
+build runs synchronously inside `load()` instead of a background thread —
+`MethodNode.load()/unload()` on a builder thread races tool threads
+decompiling the same jadx nodes and corrupts output; persisted indexes keep
+repeat loads instant.
 Target version: 0.2.0 (minor: new capability, additive DTO fields, new CLI flags, no breaking change)
 
 ## Goal

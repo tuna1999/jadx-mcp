@@ -15,7 +15,7 @@ fun resolveAppVersion(): String {
 		if (Regex("""^\d+(\.\d+){0,3}(-[\w.]+)?$""").matches(v)) return v
 	}
 	providers.environmentVariable("JADXMCP_VERSION").orNull?.takeIf { it.isNotBlank() }?.let { return it }
-	return "0.1.0"
+	return "0.2.0"
 }
 
 group = "dev.jadxmcp"

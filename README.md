@@ -21,24 +21,26 @@ Built from scratch on:
 | Build          | Gradle (Kotlin DSL), `./gradlew build`                                                                                         |
 | Decompiler     | `jadx-core` 1.5.6 (+ `jadx-dex-input`, `jadx-java-input`, `jadx-kotlin-metadata` plugins) via the Java API — no CLI subprocess |
 | MCP            | official MCP Java SDK 2.0.1 (`io.modelcontextprotocol.sdk:mcp`, Streamable HTTP + STDIO providers)                             |
+| Index          | SQLite (`org.xerial:sqlite-jdbc` 3.53.4.0) — per-APK string/xref/code-cache index, persisted across sessions                  |
 | JSON           | Jackson 3 (same stack as the SDK)                                                                                              |
 | Logging        | SLF4J + slf4j-simple (stderr only)                                                                                             |
 | HTTP container | embedded Jetty 12 (ee10 servlet)                                                                                               |
 | Tests          | JUnit 6; test APK fixture is generated at test time (javac → D8 → zip)                                                         |
 
 
-No Spring Boot, no database.
+No Spring Boot. The only embedded database is SQLite, used as a local
+per-input cache under `~/.jadx-mcp/index` (disable with `--no-index`).
 
 ## Build
 
 ```bash
-./gradlew build                          # version mặc định 0.1.0
+./gradlew build                          # version mặc định 0.2.0
 ./gradlew build -PappVersion=1.2.3      # build theo version chỉ định
 ```
 
-The runnable fat jar is `build/libs/jadx-mcp-<version>.jar` (~22 MB).
+The runnable fat jar is `build/libs/jadx-mcp-<version>.jar` (~34 MB).
 Version được resolve theo thứ tự: `-PappVersion=...` &gt; tag `v*` (CI) &gt;
-env `JADXMCP_VERSION` &gt; `0.1.0`. `java -jar jadx-mcp-<v>.jar --version` in ra đúng version đó.
+env `JADXMCP_VERSION` &gt; `0.2.0`. `java -jar jadx-mcp-<v>.jar --version` in ra đúng version đó.
 
 ## Usage
 
@@ -67,8 +69,10 @@ explicit and logs a network-exposure warning. `--log-level` sets
 | `stdio` \| `server` | transport mode (required first argument) |
 | `--input <path>` | APK/DEX/JAR to preload at startup (optional; `load_apk` tool can load later) |
 | `--host <addr>` | HTTP bind address, default `127.0.0.1` (non-loopback logs a warning) |
-| `--port <n>` | HTTP port, default `8650` |
 | `--log-level <lvl>` | `trace|debug|info|warn|error`, default `info` |
+| `--index-dir <dir>` | directory for the Phase 2 SQLite index, default `~/.jadx-mcp/index` |
+| `--no-index` | disable the index entirely (pure in-memory Phase 1 behavior) |
+| `--port <n>` | HTTP port, default `8650` |
 | `-h`, `--help`, `help` | usage, exit 0 |
 | `-V`, `--version`, `version` | print build version (must match jar filename), exit 0 |
 
@@ -141,12 +145,19 @@ src/main/java/dev/jadxmcp/
 │   ├── JadxService.java          load/replace/close inputs, validation, error codes
 │   ├── ApkSession.java           one loaded input + derived services
 │   ├── SymbolResolver.java       DEX-style ids <-> jadx nodes
-│   ├── CodeCache.java            interface (Phase 2: disk/SQLite cache)
+│   ├── CodeCache.java            interface (Phase 2 seam)
 │   ├── JadxCodeCache.java        jadx in-memory code cache adapter
-│   ├── SearchService.java        interface (Phase 2: FTS5/SQLite index)
-│   ├── JadxSearchService.java    in-memory scan implementation
-│   ├── XrefService.java          interface (Phase 2: persistent xref index)
-│   └── JadxXrefService.java      jadx usage-info based xrefs
+│   ├── IndexedCodeCache.java     Phase 2: sources persisted in SQLite
+│   ├── SearchService.java        interface (Phase 2 seam)
+│   ├── JadxSearchService.java    in-memory scan implementation (fallback)
+│   ├── IndexedSearchService.java Phase 2: indexed search_strings
+│   ├── XrefService.java          interface (Phase 2 seam, both directions)
+│   ├── JadxXrefService.java      jadx usage-info based incoming xrefs
+│   ├── IndexedXrefService.java   Phase 2: + outgoing edges from the index
+│   ├── IndexConfig.java          index enable/disable + directory
+│   ├── IndexStore.java           SQLite store (strings/edges/sources/meta)
+│   ├── IndexBuilder.java         raw-dex instruction walk -> index rows
+│   └── ResourceTableIndex.java   decoded resources.arsc -> 0x7f... lookup
 ├── tools/
 │   ├── ToolRegistry.java         ONE registration layer, transport-agnostic
 │   ├── ToolDefinition.java       name + description + JSON schema + handler
@@ -167,7 +178,7 @@ src/main/java/dev/jadxmcp/
 └── util/                         JSON mapper, version
 ```
 
-## Tools (Phase 1 — 14 tools)
+## Tools (14 tools)
 
 All list/search tools paginate (`offset`/`limit`) and return `page` metadata.
 Sources support `maxChars` truncation with explicit `truncated`/`totalChars`
@@ -177,23 +188,31 @@ with codes like `NO_APK_LOADED`, `FILE_NOT_FOUND`, `INVALID_INPUT_FILE`,
 `INVALID_SYMBOL_ID`, `INVALID_ARGUMENT`, `DECOMPILATION_FAILED`,
 `MANIFEST_NOT_FOUND`.
 
+### Phase 2 index
+
+On `load_apk`, jadx-mcp walks raw dex instructions once (no decompilation) and
+builds a SQLite index keyed by the file's SHA-256 under the index directory:
+string constants per method, outgoing reference edges, and a cache of
+decompiled sources. The index persists across sessions — reloading the same
+input is instant. With `--no-index` (or if the index cannot be opened) every
+tool falls back to the Phase 1 in-memory implementations.
 
 | Tool                | Purpose                                                                |
 | ------------------- | ---------------------------------------------------------------------- |
 | `load_apk`          | Load/replace the active APK/DEX/JAR; returns metadata                  |
-| `get_apk_info`      | Counts, manifest package, jadx version                                 |
+| `get_apk_info`      | Counts, manifest package, jadx version, index state (`building/ready/disabled`) |
 | `list_packages`     | Packages + class counts                                                |
 | `list_classes`      | Paginated classes, `package` prefix + `query` filters                  |
 | `get_class_outline` | Fields/methods/supertype/inners — no source (preferred inspection API) |
-| `get_class_source`  | Decompiled class source, `maxChars` truncation                         |
+| `get_class_source`  | Decompiled class source, `maxChars` truncation (disk-cached)           |
 | `get_method_source` | Single method by stable id — primary code-reading API                  |
 | `search_classes`    | Class/package name substring search                                    |
 | `search_methods`    | Method name/signature search with optional class filter                |
-| `search_strings`    | String constants in decompiled code (lazy, cached)                     |
-| `get_xrefs`         | Incoming usages of a class/method/field                                |
+| `search_strings`    | Indexed string-constant search with method context (decompile-free when index ready) |
+| `get_xrefs`         | Incoming + outgoing usages of a class/method/field                     |
 | `get_manifest`      | Decoded AndroidManifest.xml + parsed package/version                   |
-| `list_resources`    | Resource entries with `query`/`type` filters                           |
-| `get_resource`      | One resource by path (text or base64, truncation metadata)             |
+| `list_resources`    | Resource entries with `query`/`type` filters + numeric ids            |
+| `get_resource`      | One resource by `path` or numeric `id` (text/base64/value, truncation) |
 
 
 ### Stable symbol ids
@@ -224,8 +243,20 @@ list_classes → get_class_outline → get_method_source → get_xrefs
 - **JadxServiceTest** (12) — load success/failure, class/method lookup,
 decompilation, manifest, xrefs, string search, resource access, session
 replacement.
-- **ToolRegistryTest** (15) — every tool via the registry, independent of
-transport; error codes; pagination; truncation.
+- **IndexStoreTest** (5) — SQLite lifecycle: build, persist, reopen, version
+mismatch rebuild, unwritable dir fallback.
+- **IndexBuilderTest** (2) — instruction walk collects strings + edges without
+decompiling; deterministic rebuild.
+- **IndexedSearchServiceTest** (3) — method context from index; delegation to
+Phase 1 while building.
+- **IndexedXrefServiceTest** (4) — outgoing edges, field shape, truncation.
+- **IndexedCodeCacheTest** (1) — source survives store reopen without
+re-decompilation.
+- **ResourceTableIndexTest** (3) — hex/decimal id lookup, type/key mapping,
+empty table on arsc-less input.
+- **CliOptionsTest** (5) — `--index-dir` / `--no-index` parsing.
+- **ToolRegistryTest** (18) — every tool via the registry, independent of
+transport; error codes; pagination; truncation; index lifecycle + fallback.
 - **StdioMcpServerIT** (3) — spawns the real fat jar: handshake, tools/list,
 tool call, stdout purity (every stdout line must be JSON), `load_apk`
 without `--input`, clean exit on stdin EOF.
@@ -234,34 +265,38 @@ handling, tool call, structured errors.
 - **TransportConsistencyIT** (2) — identical structured payloads through both
 transports (volatile fields like timestamps excluded).
 
-The test APK fixture (`build/fixtures/test.apk`, ~3 KB) is generated at test
-time from `src/test/fixture-src` (javac → D8 dex → hand-encoded binary
-AndroidManifest.xml → zip). No binaries are committed.
-
 ## Security
 
 - HTTP binds to `127.0.0.1` by default; any other bind is an explicit CLI
 argument and logs a warning.
-- `load_apk` is the only path that touches the filesystem; resource tools read
-entries from the loaded APK only.
+- `load_apk` is the only path that touches the filesystem besides the index
+directory (SQLite caches keyed by input SHA-256, `--no-index` to disable);
+resource tools read entries from the loaded APK only.
 - The `Authenticator` interface in `transport/` is the extension point for
 HTTP authentication — it can be implemented without touching tools or core.
 
-## Known limitations (Phase 1)
+## Known limitations
 
 - One active APK per process; multi-session is future work (`ApkSession` is
 designed for it).
-- `search_strings` decompiles lazily once per session (cached in memory); first
-search on a huge APK can take a while. Phase 2 moves this behind FTS5.
-- Xrefs are incoming-only; outgoing xrefs are planned (interface allows it).
-- `get_resource` addresses resources by path; lookup by numeric resource id
-(`0x7f...`) arrives with the Phase 2 resource index.
+- The first `load_apk` of an unseen input builds its index synchronously by
+walking all dex instructions — proportional to code size, then persisted
+(repeat loads are instant).
+- Indexed `search_strings` results carry no line numbers (they come from raw
+dex, not decompiled text); the Phase 1 fallback does.
+- Outgoing xref destinations are raw ids; external symbols (framework
+classes) are not resolvable to sources.
+- Index directory growth is not managed automatically; deleting files there
+is safe (they rebuild on next load).
 - No authentication on HTTP yet (loopback default + extension point).
 - `get_class_source` for a single inner class returns the enclosing top-level
 class source (jadx decompiles inner classes together).
 
-## Phase 2 ideas
+## Phase 2 status and remaining ideas
 
-SQLite/FTS5 string + symbol index, persistent xref index with outgoing edges,
-disk-backed code cache, resource-id lookup, multi-APK sessions, optional
-rename/refactor support, authentication.
+Delivered in 0.2.0: SQLite string index with method context, outgoing xref
+edges, resource-id (`0x7f...`) lookup, persistent decompiled-source cache,
+`--index-dir` / `--no-index` CLI flags, index state in `get_apk_info`.
+
+Remaining ideas: multi-APK sessions, optional rename/deobfuscation support,
+HTTP authentication, FTS5 trigram acceleration for very large string tables.

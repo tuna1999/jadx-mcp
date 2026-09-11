@@ -17,15 +17,19 @@ MCP client → {StdioMcpServer | HttpMcpServer (Jetty /mcp)}
            → ToolRegistry (14 ToolDefinitions; transport-agnostic)
            → JadxService.load() → ApkSession
               ├─ SymbolResolver   (DEX-style ids ⇄ jadx nodes)
-              ├─ CodeCache / SearchService / XrefService (interfaces, Phase-2 swappable)
+              ├─ IndexStore       (SQLite, one db per input SHA-256)
+              ├─ Indexed* services over CodeCache/SearchService/XrefService
+              │   (fall back to Jadx* Phase-1 impls when index absent)
+              ├─ ResourceTableIndex (decoded resources.arsc → 0x7f... lookup)
               └─ jadx-core JadxDecompiler
 ```
 
 Key data-flow facts:
 
 - **One active APK per process**: `JadxService` holds a `volatile ApkSession`; `load()` (synchronized) validates magic bytes (dex/zip/class), builds `JadxDecompiler` with `threadsCount = clamp(1, cpus-1, 8)`, closes the previous session. `load_apk` works at runtime without `--input`.
-- **Xrefs are free**: jadx computes usage info at `load()` from raw dex; `JadxXrefService.incoming()` reads `getUseIn()` without decompiling.
-- **Decompilation is lazy + cached**: `JadxCodeCache.getClassSource(classNode)` decompiles top-level classes on demand and remembers them; `search_strings` decompiles up to `maxClassesToScan` classes once per session, then scans string literals.
+- **Xrefs**: incoming edges are free (jadx usage info computed at `load()` from raw dex); outgoing edges come from the Phase-2 index built in the same `load()`.
+- **Index build is synchronous in `load()`** (never a background thread): `IndexBuilder` walks raw instructions per method (`mth.load()` → `getInstructions()` → `mth.unload()`); concurrent walks race tool threads decompiling the same jadx nodes and corrupt output. Persisted per-hash DBs make repeat loads instant. Any index failure ⇒ services fall back to Phase-1 impls.
+- **Decompilation is lazy + cached**: `IndexedCodeCache` checks the SQLite `sources` table first, else `JadxCodeCache` decompiles on demand and persists; indexed `search_strings` needs no decompilation at all (raw `CONST_STR` rows carry method context), Phase-1 fallback scans decompiled sources with line numbers.
 - **Stable DEX-style symbol ids** everywhere: class `Lcom/ex/Foo;`, method `Lcom/ex/Foo;->decrypt([B[B)[B`, field `Lcom/ex/Foo;->key:[B`. `SymbolResolver` also accepts dotted names. IDs survive deobfuscation; all DTOs carry `id` + human-readable `name`/`className`.
 - **Error discipline**: core throws `JadxServiceException(ErrorCode)`, tools throw `ToolException`; `ToolRegistry.call()` maps everything to `CallToolResult` with `structuredContent` = `{"error":{"code","message"}}` — never JVM stack traces in responses. Codes: `NO_APK_LOADED, FILE_NOT_FOUND, INVALID_INPUT_FILE, CLASS_NOT_FOUND, METHOD_NOT_FOUND, FIELD_NOT_FOUND, RESOURCE_NOT_FOUND, INVALID_SYMBOL_ID, INVALID_ARGUMENT, DECOMPILATION_FAILED, MANIFEST_NOT_FOUND`.
 - **Pagination/truncation**: every list/search result embeds a `Page {offset, limit, total, hasMore, nextOffset}` (default limit 100); sources take `maxChars` and return `truncated`/`totalChars` metadata.
@@ -35,7 +39,7 @@ Key data-flow facts:
 | Path | Purpose |
 |---|---|
 | `src/main/java/dev/jadxmcp/` | root package: `Main`, `cli/`, `logging/`, `core/`, `tools/`, `transport/`, `model/`, `util/` |
-| `core/` | `JadxService`, `ApkSession`, `SymbolResolver` + Phase-2 interfaces (`CodeCache`, `SearchService`, `XrefService`) with jadx impls (`Jadx*`) |
+| `core/` | `JadxService`, `ApkSession`, `SymbolResolver`, Phase-2 index (`IndexConfig`, `IndexStore`, `IndexBuilder`, `ResourceTableIndex`), service seams (`CodeCache`/`SearchService`/`XrefService`) with `Jadx*` (Phase-1) and `Indexed*` (Phase-2) impls |
 | `tools/` | `ToolRegistry` + 6 grouped providers: `ApkTools`, `ClassTools`, `MethodTools`, `SearchTools`, `XrefTools`, `ResourceTools` |
 | `transport/` | `McpServers` (shared factory), `StdioMcpServer`, `HttpMcpServer`, `Authenticator` (auth extension point, ships null) |
 | `model/` | Jackson-3 records (DTOs) + `ErrorCode` + `Page` — the only shapes that cross the MCP boundary |
@@ -88,25 +92,32 @@ Exit codes (`Main`): 0 ok, 1 fatal, 2 CLI usage error, 3 `--input` load failure,
 ## Runtime/Tooling Preferences
 
 - **Java 17+ runtime** (bytecode pinned `--release 17`); build toolchain is JDK 25. Gradle 9.7.1 Kotlin DSL, single module.
-- Dependencies are deliberately pinned: jadx 1.5.6 (core + `jadx-dex-input` + `jadx-java-input` + `jadx-kotlin-metadata` — dex-input is REQUIRED or `load()` returns 0 classes), MCP SDK 2.0.1, Jetty 12 ee10 (jakarta servlet), slf4j-simple 2.0.17. Test-only: JUnit 6, `com.android.tools:r8` (from `google()` repo) for fixture dexing.
+- Dependencies are deliberately pinned: jadx 1.5.6 (core + `jadx-dex-input` + `jadx-java-input` + `jadx-kotlin-metadata` — dex-input is REQUIRED or `load()` returns 0 classes), MCP SDK 2.0.1, Jetty 12 ee10 (jakarta servlet), sqlite-jdbc 3.53.4.0 (Phase-2 index; native lib ships in the fat jar), slf4j-simple 2.0.17. Test-only: JUnit 6, `com.android.tools:r8` (from `google()` repo) for fixture dexing.
 - Version resolution order: `-PappVersion=...` > tag ref `v<semver>` > env `JADXMCP_VERSION` > `0.1.0`. The jar filename embeds the version; CI asserts `--version` output equals it.
 - No Spring Boot, no database, no GUI, no subprocess decompilation.
 
 ## Testing & QA
 
-JUnit 6 (Jupiter), 34 tests across 5 suites:
+JUnit 6 (Jupiter), 60 tests across 12 suites:
 
 | Suite | Layer | What it proves |
 |---|---|---|
 | `core/JadxServiceTest` (12) | in-JVM | load/invalid-file, class/method lookup roundtrips, decompile, manifest, xrefs, string search, resources, session replace |
-| `tools/ToolRegistryTest` (15) | in-JVM | all 14 tools transport-independently; error codes, pagination, truncation |
+| `core/IndexStoreTest` (5) | in-JVM | SQLite lifecycle: build/persist/reopen, version-mismatch rebuild, unwritable dir ⇒ null |
+| `core/IndexBuilderTest` (2) | in-JVM | instruction walk collects strings + outgoing edges without decompiling |
+| `core/IndexedSearchServiceTest` (3) | in-JVM | method context when ready; Phase-1 delegation while building |
+| `core/IndexedXrefServiceTest` (4) | in-JVM | outgoing edges, field shape, limit+1 truncation |
+| `core/IndexedCodeCacheTest` (1) | in-JVM | source survives store reopen with zero re-decompiles |
+| `core/ResourceTableIndexTest` (3) | in-JVM | hex/decimal id lookup, type/key mapping, empty on arsc-less input |
+| `cli/CliOptionsTest` (5) | in-JVM | `--index-dir`/`--no-index` parsing + mutual exclusion |
+| `tools/ToolRegistryTest` (18) | in-JVM | all 14 tools transport-independently; error codes, pagination, truncation; index lifecycle (ready + disabled fallback) |
 | `transport/StdioMcpServerIT` (3) | real process | spawns the fat jar (path via `jadxmcp.jar` sysprop set by Gradle); handshake, tool call, **stdout purity** (every line valid JSON), clean EOF exit |
 | `transport/HttpMcpServerIT` (2) | in-JVM Jetty + HttpClient | initialize, `Mcp-Session-Id` handling, tool call, structured errors |
 | `transport/TransportConsistencyIT` (2) | both | identical structured payloads modulo volatile fields |
 
 Conventions: fixture-driven (constants in `FixtureApk`: `CRYPTO_UTIL_ID`, `ENCODE_METHOD_ID`, `API_ENDPOINT`); plain JUnit asserts; ITs reuse `StdioTestClient`/`HttpMcpClient` helpers. Any new tool must get a `ToolRegistryTest` case; any transport-visible change must keep `TransportConsistencyIT` green. Keep fixture classes free of lambdas/default methods (dexed with `--min-api 26`).
 
-CI (`.github/workflows/ci.yml`) additionally smoke-tests both transports against the packaged jar and requires ≥34 executed tests; releases (tags `v*`) publish `jadx-mcp-<v>.jar` + SHA-256 to GitHub Releases.
+CI (`.github/workflows/ci.yml`) additionally smoke-tests both transports against the packaged jar and requires ≥34 executed tests (currently 60); releases (tags `v*`) publish `jadx-mcp-<v>.jar` + SHA-256 to GitHub Releases.
 
 ## Versioning Policy (AI-decided)
 
