@@ -4,26 +4,28 @@ A [JADX](https://github.com/skylot/jadx)-powered MCP server for AI coding and
 reverse-engineering agents. One codebase, two transports:
 
 - **STDIO** — headless `jadx-mcp stdio` for Claude Code, Codex, Pi and any MCP
-  client that spawns local processes. STDOUT carries MCP JSON-RPC only; logs go
-  to STDERR.
+client that spawns local processes. STDOUT carries MCP JSON-RPC only; logs go
+to STDERR.
 - **HTTP** — standalone `jadx-mcp server` exposing the MCP Streamable HTTP
-  transport at `http://<host>:<port>/mcp` (embedded Jetty, loopback by default).
+transport at `http://<host>:<port>/mcp` (embedded Jetty, loopback by default).
 
 Both transports expose exactly the same tools through one shared
 `ToolRegistry`. There is no transport-specific JADX logic.
 
 Built from scratch on:
 
-| Component        | Choice |
-|------------------|--------|
-| Java             | 17+ bytecode (built with a modern JDK) |
-| Build            | Gradle (Kotlin DSL), `./gradlew build` |
-| Decompiler       | `jadx-core` 1.5.6 (+ `jadx-dex-input`, `jadx-java-input`, `jadx-kotlin-metadata` plugins) via the Java API — no CLI subprocess |
-| MCP              | official MCP Java SDK 2.0.1 (`io.modelcontextprotocol.sdk:mcp`, Streamable HTTP + STDIO providers) |
-| JSON             | Jackson 3 (same stack as the SDK) |
-| Logging          | SLF4J + slf4j-simple (stderr only) |
-| HTTP container   | embedded Jetty 12 (ee10 servlet) |
-| Tests            | JUnit 6; test APK fixture is generated at test time (javac → D8 → zip) |
+
+| Component      | Choice                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Java           | 17+ bytecode (built with a modern JDK)                                                                                         |
+| Build          | Gradle (Kotlin DSL), `./gradlew build`                                                                                         |
+| Decompiler     | `jadx-core` 1.5.6 (+ `jadx-dex-input`, `jadx-java-input`, `jadx-kotlin-metadata` plugins) via the Java API — no CLI subprocess |
+| MCP            | official MCP Java SDK 2.0.1 (`io.modelcontextprotocol.sdk:mcp`, Streamable HTTP + STDIO providers)                             |
+| JSON           | Jackson 3 (same stack as the SDK)                                                                                              |
+| Logging        | SLF4J + slf4j-simple (stderr only)                                                                                             |
+| HTTP container | embedded Jetty 12 (ee10 servlet)                                                                                               |
+| Tests          | JUnit 6; test APK fixture is generated at test time (javac → D8 → zip)                                                         |
+
 
 No Spring Boot, no database.
 
@@ -35,8 +37,8 @@ No Spring Boot, no database.
 ```
 
 The runnable fat jar is `build/libs/jadx-mcp-<version>.jar` (~22 MB).
-Version được resolve theo thứ tự: `-PappVersion=...` > tag `v*` (CI) >
-env `JADXMCP_VERSION` > `0.1.0`. `java -jar jadx-mcp-<v>.jar --version` in ra đúng version đó.
+Version được resolve theo thứ tự: `-PappVersion=...` &gt; tag `v*` (CI) &gt;
+env `JADXMCP_VERSION` &gt; `0.1.0`. `java -jar jadx-mcp-<v>.jar --version` in ra đúng version đó.
 
 ## Usage
 
@@ -57,6 +59,24 @@ java -jar jadx-mcp.jar server --input /samples/test.apk --host 127.0.0.1 --port 
 `--host` defaults to `127.0.0.1`. Binding to anything else (e.g. `0.0.0.0`) is
 explicit and logs a network-exposure warning. `--log-level` sets
 `trace|debug|info|warn|error`.
+
+### CLI reference
+
+| Flag | Description |
+|------|-------------|
+| `stdio` \| `server` | transport mode (required first argument) |
+| `--input <path>` | APK/DEX/JAR to preload at startup (optional; `load_apk` tool can load later) |
+| `--host <addr>` | HTTP bind address, default `127.0.0.1` (non-loopback logs a warning) |
+| `--port <n>` | HTTP port, default `8650` |
+| `--log-level <lvl>` | `trace|debug|info|warn|error`, default `info` |
+| `-h`, `--help`, `help` | usage, exit 0 |
+| `-V`, `--version`, `version` | print build version (must match jar filename), exit 0 |
+
+Exit codes: `0` ok / help / version · `1` fatal error · `2` CLI usage error ·
+`3` startup `--input` failed to load · `130` interrupted (SIGINT).
+
+Note: CLI output (usage, `--version`) is printed to **stderr**; stdout is
+reserved for MCP JSON-RPC in stdio mode.
 
 ### Claude Code / Claude Desktop configuration
 
@@ -157,22 +177,24 @@ with codes like `NO_APK_LOADED`, `FILE_NOT_FOUND`, `INVALID_INPUT_FILE`,
 `INVALID_SYMBOL_ID`, `INVALID_ARGUMENT`, `DECOMPILATION_FAILED`,
 `MANIFEST_NOT_FOUND`.
 
-| Tool | Purpose |
-|------|---------|
-| `load_apk` | Load/replace the active APK/DEX/JAR; returns metadata |
-| `get_apk_info` | Counts, manifest package, jadx version |
-| `list_packages` | Packages + class counts |
-| `list_classes` | Paginated classes, `package` prefix + `query` filters |
+
+| Tool                | Purpose                                                                |
+| ------------------- | ---------------------------------------------------------------------- |
+| `load_apk`          | Load/replace the active APK/DEX/JAR; returns metadata                  |
+| `get_apk_info`      | Counts, manifest package, jadx version                                 |
+| `list_packages`     | Packages + class counts                                                |
+| `list_classes`      | Paginated classes, `package` prefix + `query` filters                  |
 | `get_class_outline` | Fields/methods/supertype/inners — no source (preferred inspection API) |
-| `get_class_source` | Decompiled class source, `maxChars` truncation |
-| `get_method_source` | Single method by stable id — primary code-reading API |
-| `search_classes` | Class/package name substring search |
-| `search_methods` | Method name/signature search with optional class filter |
-| `search_strings` | String constants in decompiled code (lazy, cached) |
-| `get_xrefs` | Incoming usages of a class/method/field |
-| `get_manifest` | Decoded AndroidManifest.xml + parsed package/version |
-| `list_resources` | Resource entries with `query`/`type` filters |
-| `get_resource` | One resource by path (text or base64, truncation metadata) |
+| `get_class_source`  | Decompiled class source, `maxChars` truncation                         |
+| `get_method_source` | Single method by stable id — primary code-reading API                  |
+| `search_classes`    | Class/package name substring search                                    |
+| `search_methods`    | Method name/signature search with optional class filter                |
+| `search_strings`    | String constants in decompiled code (lazy, cached)                     |
+| `get_xrefs`         | Incoming usages of a class/method/field                                |
+| `get_manifest`      | Decoded AndroidManifest.xml + parsed package/version                   |
+| `list_resources`    | Resource entries with `query`/`type` filters                           |
+| `get_resource`      | One resource by path (text or base64, truncation metadata)             |
+
 
 ### Stable symbol ids
 
@@ -193,24 +215,6 @@ Recommended agent flow:
 list_classes → get_class_outline → get_method_source → get_xrefs
 ```
 
-## CI/CD (GitHub Actions)
-
-- **`.github/workflows/ci.yml`** — push/PR trên `main`: build + toàn bộ test suite
-  (JDK 25 Temurin, cache read-only để test luôn chạy thật), kiểm chứng fixture
-  APK + số test thực thi, rồi smoke test trực tiếp cả STDIO và HTTP trên fat jar.
-- **`.github/workflows/release.yml`** — khi push tag `v*`: build với version lấy
-  từ tag (`v1.2.3` → `1.2.3`), test, assert `--version` khớp tag, tạo GitHub
-  Release kèm `jadx-mcp-<v>.jar` và checksum SHA-256.
-- CI thường (branch/PR) build version `0.1.0-dev.<short-sha>` và upload jar
-  làm artifact `jadx-mcp-<version>` sau mỗi run thành công.
-
-```bash
-git config core.hooksPath .githooks   # một lần sau khi clone
-# hook post-commit tự đánh tag v<version> khi version trong build.gradle.kts đổi
-# đẩy tag để phát hành:
-git push origin v0.1.0                # -> release tự động (jar + SHA-256)
-```
-
 ## Tests
 
 ```bash
@@ -218,17 +222,17 @@ git push origin v0.1.0                # -> release tự động (jar + SHA-256)
 ```
 
 - **JadxServiceTest** (12) — load success/failure, class/method lookup,
-  decompilation, manifest, xrefs, string search, resource access, session
-  replacement.
+decompilation, manifest, xrefs, string search, resource access, session
+replacement.
 - **ToolRegistryTest** (15) — every tool via the registry, independent of
-  transport; error codes; pagination; truncation.
+transport; error codes; pagination; truncation.
 - **StdioMcpServerIT** (3) — spawns the real fat jar: handshake, tools/list,
-  tool call, stdout purity (every stdout line must be JSON), `load_apk`
-  without `--input`, clean exit on stdin EOF.
+tool call, stdout purity (every stdout line must be JSON), `load_apk`
+without `--input`, clean exit on stdin EOF.
 - **HttpMcpServerIT** (2) — real Jetty + Streamable HTTP: initialize, session
-  handling, tool call, structured errors.
+handling, tool call, structured errors.
 - **TransportConsistencyIT** (2) — identical structured payloads through both
-  transports (volatile fields like timestamps excluded).
+transports (volatile fields like timestamps excluded).
 
 The test APK fixture (`build/fixtures/test.apk`, ~3 KB) is generated at test
 time from `src/test/fixture-src` (javac → D8 dex → hand-encoded binary
@@ -237,24 +241,24 @@ AndroidManifest.xml → zip). No binaries are committed.
 ## Security
 
 - HTTP binds to `127.0.0.1` by default; any other bind is an explicit CLI
-  argument and logs a warning.
+argument and logs a warning.
 - `load_apk` is the only path that touches the filesystem; resource tools read
-  entries from the loaded APK only.
+entries from the loaded APK only.
 - The `Authenticator` interface in `transport/` is the extension point for
-  HTTP authentication — it can be implemented without touching tools or core.
+HTTP authentication — it can be implemented without touching tools or core.
 
 ## Known limitations (Phase 1)
 
 - One active APK per process; multi-session is future work (`ApkSession` is
-  designed for it).
+designed for it).
 - `search_strings` decompiles lazily once per session (cached in memory); first
-  search on a huge APK can take a while. Phase 2 moves this behind FTS5.
+search on a huge APK can take a while. Phase 2 moves this behind FTS5.
 - Xrefs are incoming-only; outgoing xrefs are planned (interface allows it).
 - `get_resource` addresses resources by path; lookup by numeric resource id
-  (`0x7f...`) arrives with the Phase 2 resource index.
+(`0x7f...`) arrives with the Phase 2 resource index.
 - No authentication on HTTP yet (loopback default + extension point).
 - `get_class_source` for a single inner class returns the enclosing top-level
-  class source (jadx decompiles inner classes together).
+class source (jadx decompiles inner classes together).
 
 ## Phase 2 ideas
 
