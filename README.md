@@ -190,6 +190,18 @@ Recommended agent flow:
 list_classes → get_class_outline → get_method_source → get_xrefs
 ```
 
+## CI/CD (GitHub Actions)
+
+- **`.github/workflows/ci.yml`** — push/PR trên `main`: build + toàn bộ test suite
+  (JDK 25 Temurin, cache read-only để test luôn chạy thật), kiểm chứng fixture
+  APK + số test thực thi, rồi smoke test trực tiếp cả STDIO và HTTP trên fat jar.
+- **`.github/workflows/release.yml`** — khi push tag `v*`: build, test, tạo
+  GitHub Release kèm `jadx-mcp.jar` và checksum SHA-256.
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0   # -> tạo release tự động
+```
+
 ## Tests
 
 ```bash

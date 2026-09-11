@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & Test (JDK ${{ matrix.java }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java: [25]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          # Test task needs a real run (fixture APK + fat-jar ITs); never trust cache-restored results.
+          cache-read-only: true
+
+      - name: Build and test
+        run: ./gradlew build --stacktrace
+
+      # Tests must actually execute on CI: the fixture APK and the fat jar the
+      # integration tests spawn are not cacheable task outputs.
+      - name: Verify tests really ran
+        run: |
+          test -f build/fixtures/test.apk || { echo "::error::fixture APK missing - tests did not execute"; exit 1; }
+          python3 - <<'EOF'
+          import glob, xml.etree.ElementTree as ET
+          total = fail = 0
+          for f in glob.glob('build/test-results/test/*.xml'):
+              r = ET.parse(f).getroot()
+              total += int(r.get('tests', 0))
+              fail += int(r.get('failures', 0)) + int(r.get('errors', 0))
+          print(f'tests={total} failed={fail}')
+          assert total >= 34, f'expected >=34 tests, got {total} (cache-restored results?)'
+          assert fail == 0, f'{fail} failing tests'
+          EOF
+
+      - name: Smoke test fat jar (STDIO)
+        run: |
+          printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1.0"}}}\n' > /tmp/ci.in
+          ( cat /tmp/ci.in
+            sleep 2
+            echo '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+            sleep 1
+            echo '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_manifest","arguments":{}}}'
+            sleep 2
+          ) | java -jar build/libs/jadx-mcp.jar stdio --input build/fixtures/test.apk 2>/dev/null \
+            | python3 -c '
+          import sys, json
+          lines = [json.loads(l) for l in sys.stdin]  # every stdout line must be JSON
+          m = next(x for x in lines if x.get("id") == 2)["result"]["structuredContent"]
+          assert m["packageName"] == "dev.jadxmcp.fixture", m
+          print("STDIO smoke OK:", m["packageName"])'
+
+      - name: Smoke test fat jar (HTTP)
+        run: |
+          java -jar build/libs/jadx-mcp.jar server --input build/fixtures/test.apk --port 8650 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          sleep 5
+          SID=$(curl -s -D - -o /dev/null -X POST http://127.0.0.1:8650/mcp \
+            -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1.0"}}}' \
+            | grep -i '^mcp-session-id' | tr -d '\r' | cut -d' ' -f2)
+          test -n "$SID" || { echo "::error::no Mcp-Session-Id returned"; exit 1; }
+          curl -s -o /dev/null -X POST http://127.0.0.1:8650/mcp \
+            -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+            -H "Mcp-Session-Id: $SID" \
+            -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+          curl -s -X POST http://127.0.0.1:8650/mcp \
+            -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+            -H "Mcp-Session-Id: $SID" \
+            -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_apk_info","arguments":{}}}' \
+            | grep '^data:' | python3 -c '
+          import sys, json
+          m = json.loads(sys.stdin.readline()[5:])
+          sc = m["result"]["structuredContent"]
+          assert sc["classCount"] >= 1, sc
+          print("HTTP smoke OK: classes =", sc["classCount"])'
+
+      - name: Upload test reports (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ matrix.java }}
+          path: build/reports/tests/test/
+          if-no-files-found: ignore
