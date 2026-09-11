@@ -111,11 +111,13 @@ public final class JadxSearchService implements SearchService {
 					String value = m.group(1);
 					String cmp = caseSensitive ? value : value.toLowerCase(Locale.ROOT);
 					if (cmp.contains(q) && seen.add(value + "@" + cls.getRawName())) {
-						result.add(new StringMatch(
-								value,
-								SymbolResolver.classId(cls),
-								cls.getClassInfo().getAliasFullName(),
-								i + 1));
+					result.add(new StringMatch(
+							value,
+							SymbolResolver.classId(cls),
+							cls.getClassInfo().getAliasFullName(),
+							i + 1,
+							null,
+							null));
 						if (result.size() >= limit) {
 							return result;
 						}

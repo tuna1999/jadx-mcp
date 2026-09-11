@@ -76,17 +76,17 @@ public final class SearchTools {
 	private ToolDefinition searchStrings() {
 		return new ToolDefinition(
 				"search_strings",
-				"Search string constants in decompiled code. Sources are decompiled lazily once per session "
-						+ "and cached. Returns the string value plus the class it appears in.",
+				"Search string constants across the whole input. When the Phase-2 index is ready "
+						+ "this runs on pre-extracted dex string constants (no decompilation) and results carry "
+						+ "method context (methodId/methodName). Otherwise it falls back to scanning decompiled "
+						+ "sources with line numbers. 'maxClasses' is deprecated and ignored.",
 				"""
 						{
 						  "type": "object",
 						  "properties": {
 						    "query": { "type": "string", "description": "Substring to match against string constants" },
-						    "caseSensitive": { "type": "boolean", "default": false },
-						    "limit": { "type": "integer", "minimum": 1, "maximum": 500, "default": 50 },
 						    "maxClasses": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 5000,
-						      "description": "Upper bound of classes to decompile+scan for this search" }
+						      "description": "Deprecated: ignored. Kept for backward compatibility." }
 						  },
 						  "required": ["query"]
 						}
