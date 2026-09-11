@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Auto-tag: when the declared version in build.gradle.kts (the `return "x.y.z"`
+# fallback inside resolveAppVersion) changes and this commit is made, create an
+# annotated tag v<x.y.z> if it doesn't exist yet. Pushing the tag triggers the
+# Release workflow (GitHub Release + jar + SHA-256).
+set -eu
+
+VERSION=$(grep -m1 -oE 'return "[0-9]+\.[0-9]+\.[0-9]+[^"]*"' build.gradle.kts | grep -oE '"[^"]+"' | tr -d '"')
+[ -n "$VERSION" ] || exit 0
+TAG="v$VERSION"
+
+# Tag already exists anywhere? Then nothing to do.
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+  exit 0
+fi
+
+git tag -a "$TAG" -m "jadx-mcp $VERSION"
+echo "tagged $TAG -> $(git rev-parse --short HEAD) (push with: git push origin $TAG)"
