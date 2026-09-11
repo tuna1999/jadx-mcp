@@ -34,6 +34,10 @@ public final class FixtureApk {
 	public static final String ENCODE_METHOD_ID = "Ldev/jadxmcp/fixture/CryptoUtil;->encode([B[B)[B";
 	public static final String API_ENDPOINT = "https://api.fixture.example.com/v1/data";
 
+	public static final String API_CLIENT_ID = "Ldev/jadxmcp/fixture/ApiClient;";
+	public static final String API_CLIENT_CALL_ID = "Ldev/jadxmcp/fixture/ApiClient;->call(Ljava/lang/String;)[B";
+	public static final String API_CLIENT_DESCRIBE = "api-client-ready";
+
 	private static Path cached;
 
 	private FixtureApk() {
