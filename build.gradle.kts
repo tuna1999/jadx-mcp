@@ -6,8 +6,20 @@ plugins {
     application
 }
 
+// Version resolution: -PappVersion=... > tag ref (v1.2.3) > JADXMCP_VERSION env > default.
+// Keeps local builds stable while CI/release builds carry the tag version.
+fun resolveAppVersion(): String {
+	providers.gradleProperty("appVersion").orNull?.takeIf { it.isNotBlank() }?.let { return it }
+	providers.environmentVariable("GITHUB_REF_NAME").orNull?.let { ref ->
+		val v = ref.removePrefix("v")
+		if (Regex("""^\d+(\.\d+){0,3}(-[\w.]+)?$""").matches(v)) return v
+	}
+	providers.environmentVariable("JADXMCP_VERSION").orNull?.takeIf { it.isNotBlank() }?.let { return it }
+	return "0.1.0"
+}
+
 group = "dev.jadxmcp"
-version = "0.1.0"
+version = resolveAppVersion()
 
 repositories {
     mavenCentral()
@@ -62,7 +74,7 @@ tasks.test {
     maxHeapSize = "2g"
     // Integration tests spawn the packaged fat jar.
     dependsOn(tasks.named("fatJar"))
-    systemProperty("jadxmcp.jar", layout.buildDirectory.file("libs/jadx-mcp.jar").get().asFile.absolutePath)
+    systemProperty("jadxmcp.jar", tasks.named<Jar>("fatJar").flatMap { it.archiveFile }.get().asFile.absolutePath)
 }
 
 // ---------------------------------------------------------------------------
@@ -101,7 +113,7 @@ val mergeServiceFiles = tasks.register("mergeServiceFiles") {
 }
 
 val fatJar = tasks.register<Jar>("fatJar") {
-    archiveFileName = "jadx-mcp.jar"
+    archiveFileName = "jadx-mcp-${project.version}.jar"
     destinationDirectory = layout.buildDirectory.dir("libs")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     manifest {

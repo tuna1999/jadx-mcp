@@ -49,6 +49,10 @@ public final class CliOptions {
 			case "--help":
 			case "help":
 				throw new CliException(usage(), false, true);
+			case "-V":
+			case "--version":
+			case "version":
+				throw new CliException(dev.jadxmcp.util.Version.value(), false, true);
 			default:
 				throw new CliException("unknown mode '" + args[0] + "'; expected 'stdio' or 'server'");
 		}

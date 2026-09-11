@@ -24,22 +24,32 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build and test
-        run: ./gradlew build --stacktrace
+      - name: Compute version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Verify fat jar runs
-        run: java -jar build/libs/jadx-mcp.jar --help >/dev/null
+      - name: Build and test (version ${{ steps.ver.outputs.version }})
+        run: ./gradlew build --stacktrace -PappVersion=${{ steps.ver.outputs.version }}
+
+      - name: Verify fat jar runs and reports the tag version
+        run: |
+          JAR="build/libs/jadx-mcp-${{ steps.ver.outputs.version }}.jar"
+          java -jar "$JAR" --help >/dev/null
+          test "$(java -jar "$JAR" --version)" = "${{ steps.ver.outputs.version }}"
 
       - name: Prepare artifacts
         run: |
+          V=${{ steps.ver.outputs.version }}
+          JAR="build/libs/jadx-mcp-$V.jar"
+          test -f "$JAR"
           mkdir -p dist
-          cp build/libs/jadx-mcp.jar dist/
-          cd dist && sha256sum jadx-mcp.jar > jadx-mcp.jar.sha256
+          cp "$JAR" dist/
+          cd dist && sha256sum "jadx-mcp-$V.jar" > "jadx-mcp-$V.jar.sha256"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            dist/jadx-mcp.jar
-            dist/jadx-mcp.jar.sha256
+            dist/jadx-mcp-${{ steps.ver.outputs.version }}.jar
+            dist/jadx-mcp-${{ steps.ver.outputs.version }}.jar.sha256

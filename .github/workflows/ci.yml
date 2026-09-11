@@ -35,8 +35,38 @@ jobs:
           # Test task needs a real run (fixture APK + fat-jar ITs); never trust cache-restored results.
           cache-read-only: true
 
-      - name: Build and test
-        run: ./gradlew build --stacktrace
+      - name: Compute version
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="0.1.0-dev.${GITHUB_SHA::7}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test (version ${{ steps.ver.outputs.version }})
+        run: ./gradlew build --stacktrace -PappVersion=${{ steps.ver.outputs.version }}
+
+      - name: Locate fat jar
+        id: jar
+        run: |
+          JAR="build/libs/jadx-mcp-${{ steps.ver.outputs.version }}.jar"
+          test -f "$JAR" || { echo "::error::$JAR missing"; exit 1; }
+          echo "path=$JAR" >> "$GITHUB_OUTPUT"
+
+      - name: Check --version output matches build version
+        run: |
+          OUT=$(java -jar ${{ steps.jar.outputs.path }} --version)
+          echo "--version: $OUT / expected ${{ steps.ver.outputs.version }}"
+          test "$OUT" = "${{ steps.ver.outputs.version }}"
+
+      - name: Upload jar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jadx-mcp-${{ steps.ver.outputs.version }}
+          path: ${{ steps.jar.outputs.path }}
+          if-no-files-found: error
 
       # Tests must actually execute on CI: the fixture APK and the fat jar the
       # integration tests spawn are not cacheable task outputs.
@@ -64,7 +94,7 @@ jobs:
             sleep 1
             echo '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_manifest","arguments":{}}}'
             sleep 2
-          ) | java -jar build/libs/jadx-mcp.jar stdio --input build/fixtures/test.apk 2>/dev/null \
+          ) | java -jar ${{ steps.jar.outputs.path }} stdio --input build/fixtures/test.apk 2>/dev/null \
             | python3 -c '
           import sys, json
           lines = [json.loads(l) for l in sys.stdin]  # every stdout line must be JSON
@@ -74,7 +104,7 @@ jobs:
 
       - name: Smoke test fat jar (HTTP)
         run: |
-          java -jar build/libs/jadx-mcp.jar server --input build/fixtures/test.apk --port 8650 &
+          java -jar ${{ steps.jar.outputs.path }} server --input build/fixtures/test.apk --port 8650 &
           SERVER_PID=$!
           trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
           sleep 5

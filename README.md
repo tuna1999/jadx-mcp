@@ -30,10 +30,13 @@ No Spring Boot, no database.
 ## Build
 
 ```bash
-./gradlew build          # compiles, runs all tests, produces build/libs/jadx-mcp.jar
+./gradlew build                          # version mặc định 0.1.0
+./gradlew build -PappVersion=1.2.3      # build theo version chỉ định
 ```
 
-The runnable fat jar is `build/libs/jadx-mcp.jar` (~22 MB).
+The runnable fat jar is `build/libs/jadx-mcp-<version>.jar` (~22 MB).
+Version được resolve theo thứ tự: `-PappVersion=...` > tag `v*` (CI) >
+env `JADXMCP_VERSION` > `0.1.0`. `java -jar jadx-mcp-<v>.jar --version` in ra đúng version đó.
 
 ## Usage
 
@@ -195,8 +198,11 @@ list_classes → get_class_outline → get_method_source → get_xrefs
 - **`.github/workflows/ci.yml`** — push/PR trên `main`: build + toàn bộ test suite
   (JDK 25 Temurin, cache read-only để test luôn chạy thật), kiểm chứng fixture
   APK + số test thực thi, rồi smoke test trực tiếp cả STDIO và HTTP trên fat jar.
-- **`.github/workflows/release.yml`** — khi push tag `v*`: build, test, tạo
-  GitHub Release kèm `jadx-mcp.jar` và checksum SHA-256.
+- **`.github/workflows/release.yml`** — khi push tag `v*`: build với version lấy
+  từ tag (`v1.2.3` → `1.2.3`), test, assert `--version` khớp tag, tạo GitHub
+  Release kèm `jadx-mcp-<v>.jar` và checksum SHA-256.
+- CI thường (branch/PR) build version `0.1.0-dev.<short-sha>` và upload jar
+  làm artifact `jadx-mcp-<version>` sau mỗi run thành công.
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0   # -> tạo release tự động
