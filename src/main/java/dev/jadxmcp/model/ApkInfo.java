@@ -16,5 +16,6 @@ public record ApkInfo(
 		Boolean manifestPresent,
 		String manifestPackage,
 		String jadxVersion,
-		String loadedAt) {
+		String loadedAt,
+		IndexState index) {
 }

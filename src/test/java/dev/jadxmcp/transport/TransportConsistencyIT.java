@@ -7,6 +7,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import dev.jadxmcp.core.IndexConfig;
 import dev.jadxmcp.core.JadxService;
 import dev.jadxmcp.fixture.FixtureApk;
 import dev.jadxmcp.testutil.HttpMcpClient;
@@ -54,7 +55,7 @@ class TransportConsistencyIT {
 	}
 
 	private void initStdio() throws Exception {
-		jadxForStdio = new JadxService();
+		jadxForStdio = new JadxService(IndexConfig.disabled());
 		jadxForStdio.load(FixtureApk.apk());
 		stdio = StdioTestClient.start(jadxForStdio);
 		stdio.request(1, "initialize", INIT);
@@ -62,7 +63,7 @@ class TransportConsistencyIT {
 	}
 
 	private void initHttp() throws Exception {
-		jadxForHttp = new JadxService();
+		jadxForHttp = new JadxService(IndexConfig.disabled());
 		jadxForHttp.load(FixtureApk.apk());
 		httpServer = new HttpMcpServer(jadxForHttp, "127.0.0.1", 0);
 		httpServer.start();

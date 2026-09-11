@@ -21,7 +21,16 @@ public final class JadxService implements AutoCloseable {
 
 	private static final Logger LOG = LoggerFactory.getLogger(JadxService.class);
 
+	private final IndexConfig indexConfig;
 	private volatile ApkSession session;
+
+	public JadxService() {
+		this(IndexConfig.enabledDefault());
+	}
+
+	public JadxService(IndexConfig indexConfig) {
+		this.indexConfig = indexConfig;
+	}
 
 	/** Load (or replace) the active input. Returns the new session. */
 	public synchronized ApkSession load(Path path) {
@@ -59,7 +68,23 @@ public final class JadxService implements AutoCloseable {
 			jadx.load();
 			// force resource loading so counts and manifest are available immediately
 			jadx.getResources();
-			newSession = new ApkSession(jadx, normalized, size);
+			// Build the index synchronously: walking raw instructions
+			// (load()/unload() per method) must not race tool threads that
+			// decompile the same jadx nodes. Persisted indexes make repeat
+			// loads of the same input instant.
+			IndexStore store = openIndex(normalized);
+			if (store != null && store.needsBuild()) {
+				try {
+					LOG.info("Building Phase 2 index for {} ...", normalized.getFileName());
+					IndexBuilder.build(jadx.getRoot(), store);
+					store.markReady();
+				} catch (Throwable t) {
+					LOG.warn("index build failed; continuing with Phase 1 services", t);
+					store.close();
+					store = null;
+				}
+			}
+			newSession = new ApkSession(jadx, normalized, size, store);
 		} catch (Exception e) {
 			LOG.error("Failed to load input '{}'", normalized, e);
 			throw new JadxServiceException(ErrorCode.INVALID_INPUT_FILE,
@@ -73,6 +98,44 @@ public final class JadxService implements AutoCloseable {
 			LOG.info("Previous input unloaded");
 		}
 		return newSession;
+	}
+
+	/** Open the Phase 2 index store for the input, or null when disabled/unavailable. */
+	private IndexStore openIndex(Path input) {
+		if (!indexConfig.enabled()) {
+			return null;
+		}
+		try {
+			String hash = sha256(input);
+			IndexStore store = IndexStore.open(indexConfig.dir(), hash, JadxDecompiler.getVersion());
+			if (store == null) {
+				LOG.warn("index disabled: cannot open index store in {}", indexConfig.dir());
+			}
+			return store;
+		} catch (Exception e) {
+			LOG.warn("index disabled: {}", String.valueOf(e.getMessage()));
+			return null;
+		}
+	}
+	private static String sha256(Path file) throws java.io.IOException {
+		java.security.MessageDigest digest;
+		try {
+			digest = java.security.MessageDigest.getInstance("SHA-256");
+		} catch (java.security.NoSuchAlgorithmException e) {
+			throw new IllegalStateException("SHA-256 unavailable", e);
+		}
+		try (InputStream in = Files.newInputStream(file)) {
+			byte[] buf = new byte[65536];
+			int n;
+			while ((n = in.read(buf)) > 0) {
+				digest.update(buf, 0, n);
+			}
+		}
+		StringBuilder hex = new StringBuilder(64);
+		for (byte b : digest.digest()) {
+			hex.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
+		}
+		return hex.toString();
 	}
 
 	private static boolean looksSupported(Path file) {

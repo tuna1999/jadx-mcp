@@ -23,14 +23,19 @@ public final class CliOptions {
 	private final Path input;
 	private final String host;
 	private final int port;
+	private final Path indexDir;
+	private final boolean noIndex;
 	private final String logLevel;
 
-	private CliOptions(Mode mode, Path input, String host, int port, String logLevel) {
+	private CliOptions(Mode mode, Path input, String host, int port, String logLevel,
+			Path indexDir, boolean noIndex) {
 		this.mode = mode;
 		this.input = input;
 		this.host = host;
 		this.port = port;
 		this.logLevel = logLevel;
+		this.indexDir = indexDir;
+		this.noIndex = noIndex;
 	}
 
 	public static CliOptions parse(String[] args) {
@@ -60,6 +65,8 @@ public final class CliOptions {
 		String host = "127.0.0.1";
 		int port = 8650;
 		String logLevel = "info";
+		Path indexDir = null;
+		boolean noIndex = false;
 		List<String> rest = new ArrayList<>(List.of(args).subList(1, args.length));
 		for (int i = 0; i < rest.size(); i++) {
 			String a = rest.get(i);
@@ -74,24 +81,33 @@ public final class CliOptions {
 					String portStr = requireValue(rest, ++i, a);
 					try {
 						port = Integer.parseInt(portStr);
-					} catch (NumberFormatException e) {
-						throw new CliException("invalid --port value '" + portStr + "'");
-					}
-					if (port <= 0 || port > 65535) {
-						throw new CliException("port out of range: " + port);
-					}
-					break;
+				} catch (NumberFormatException e) {
+					throw new CliException("invalid --port value '" + portStr + "'");
+				}
+				if (port <= 0 || port > 65535) {
+					throw new CliException("port out of range: " + port);
+				}
+				break;
 				case "--log-level":
 					logLevel = requireValue(rest, ++i, a).toLowerCase();
 					if (!List.of("trace", "debug", "info", "warn", "error").contains(logLevel)) {
 						throw new CliException("invalid --log-level '" + logLevel + "'");
 					}
 					break;
+				case "--index-dir":
+					indexDir = Path.of(requireValue(rest, ++i, a));
+					break;
+				case "--no-index":
+					noIndex = true;
+					break;
 				default:
 					throw new CliException("unknown argument '" + a + "'");
 			}
 		}
-		return new CliOptions(mode, input, host, port, logLevel);
+		if (noIndex && indexDir != null) {
+			throw new CliException("--no-index and --index-dir are mutually exclusive");
+		}
+		return new CliOptions(mode, input, host, port, logLevel, indexDir, noIndex);
 	}
 
 	private static String requireValue(List<String> args, int index, String flag) {
@@ -121,6 +137,17 @@ public final class CliOptions {
 		return logLevel;
 	}
 
+	/** Effective index configuration derived from the parsed flags. */
+	public dev.jadxmcp.core.IndexConfig indexConfig() {
+		if (noIndex) {
+			return dev.jadxmcp.core.IndexConfig.disabled();
+		}
+		if (indexDir != null) {
+			return dev.jadxmcp.core.IndexConfig.of(indexDir);
+		}
+		return dev.jadxmcp.core.IndexConfig.enabledDefault();
+	}
+
 	public boolean bindsNonLoopback() {
 		return !"127.0.0.1".equals(host) && !"localhost".equals(host) && !"::1".equals(host);
 	}
@@ -128,10 +155,10 @@ public final class CliOptions {
 	public static String usage() {
 		return """
 				jadx-mcp - JADX MCP server for AI agents
-
-				Usage:
 				  jadx-mcp stdio  [--input <apk|dex|jar>] [--log-level <trace|debug|info|warn|error>]
+				                  [--index-dir <dir> | --no-index]
 				  jadx-mcp server [--input <apk|dex|jar>] [--host <host>] [--port <port>] [--log-level <level>]
+				                  [--index-dir <dir> | --no-index]
 
 				Modes:
 				  stdio   Headless MCP server speaking newline-delimited JSON-RPC over stdin/stdout.
@@ -141,6 +168,8 @@ public final class CliOptions {
 				Notes:
 				  --host defaults to 127.0.0.1. Binding to anything else (e.g. 0.0.0.0) is explicit
 				  and exposes the server to the network.
+				  The Phase 2 index (string search, outgoing xrefs, code cache) persists under
+				  ~/.jadx-mcp/index by default; override with --index-dir or disable with --no-index.
 				  If --input is omitted, load the APK later via the load_apk tool.""";
 	}
 

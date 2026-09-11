@@ -165,6 +165,19 @@ public final class ApkTools {
 				manifestPresent,
 				manifestPackage,
 				session.jadxVersion(),
-				TS.format(session.loadedAt()));
+				TS.format(session.loadedAt()),
+				indexState(session));
+	}
+
+	static dev.jadxmcp.model.IndexState indexState(ApkSession session) {
+		dev.jadxmcp.core.IndexStore store = session.indexStore();
+		if (store == null) {
+			return new dev.jadxmcp.model.IndexState(dev.jadxmcp.model.IndexState.DISABLED, null, null);
+		}
+		if (!store.ready()) {
+			return new dev.jadxmcp.model.IndexState(dev.jadxmcp.model.IndexState.BUILDING, null, null);
+		}
+		return new dev.jadxmcp.model.IndexState(dev.jadxmcp.model.IndexState.READY,
+				store.stringCount(), store.edgeCount());
 	}
 }

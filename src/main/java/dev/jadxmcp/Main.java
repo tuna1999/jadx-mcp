@@ -34,7 +34,7 @@ public final class Main {
 		Logging.init(opts.logLevel());
 		Logger log = LoggerFactory.getLogger(Main.class);
 
-		try (JadxService jadx = new JadxService()) {
+		try (JadxService jadx = new JadxService(opts.indexConfig())) {
 			if (opts.input() != null) {
 				try {
 					jadx.load(opts.input());

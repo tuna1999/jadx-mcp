@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import dev.jadxmcp.core.IndexConfig;
 import dev.jadxmcp.core.JadxService;
 import dev.jadxmcp.fixture.FixtureApk;
 import dev.jadxmcp.testutil.HttpMcpClient;
@@ -44,7 +45,7 @@ class HttpMcpServerIT {
 	}
 
 	private HttpMcpClient startServer() throws Exception {
-		jadx = new JadxService();
+		jadx = new JadxService(IndexConfig.disabled());
 		jadx.load(FixtureApk.apk());
 		server = new HttpMcpServer(jadx, "127.0.0.1", 0);
 		server.start();

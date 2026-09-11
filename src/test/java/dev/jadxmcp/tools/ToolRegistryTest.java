@@ -6,6 +6,13 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import java.nio.file.Path;
+
+import org.junit.jupiter.api.io.TempDir;
+
+import dev.jadxmcp.core.IndexConfig;
+import dev.jadxmcp.model.IndexState;
 
 import java.util.List;
 import java.util.Map;
@@ -30,6 +37,9 @@ class ToolRegistryTest {
 	private JadxService jadx;
 	private ToolRegistry registry;
 
+	@TempDir
+	Path indexDir;
+
 	@BeforeAll
 	static void apk() {
 		FixtureApk.apk();
@@ -43,7 +53,7 @@ class ToolRegistryTest {
 	}
 
 	private ToolRegistry loaded() {
-		jadx = new JadxService();
+		jadx = new JadxService(IndexConfig.of(indexDir));
 		jadx.load(FixtureApk.apk());
 		registry = new ToolRegistry(jadx);
 		return registry;
@@ -61,7 +71,7 @@ class ToolRegistryTest {
 
 	@Test
 	void noApkLoadedErrorsAreStructured() {
-		jadx = new JadxService();
+		jadx = new JadxService(IndexConfig.of(indexDir));
 		registry = new ToolRegistry(jadx);
 		ToolException e = assertThrows(ToolException.class,
 				() -> registry.call("list_classes", Map.of()));
@@ -215,6 +225,44 @@ class ToolRegistryTest {
 
 		assertEquals(ErrorCode.RESOURCE_NOT_FOUND, assertThrows(ToolException.class,
 				() -> registry.call("get_resource", Map.of("path", "no/such/file"))).code());
+	}
+
+	@Test
+	void indexLifecycleUpgradesTools() throws Exception {
+		registry = loaded();
+		// build is synchronous: the index must already be ready
+		ApkInfo info = assertInstanceOf(ApkInfo.class, registry.call("get_apk_info", Map.of()));
+		assertEquals(IndexState.READY, info.index().state());
+
+		Map<?, ?> strings = (Map<?, ?>) registry.call("search_strings",
+				Map.of("query", "api-client-ready"));
+		dev.jadxmcp.model.StringMatch match = assertInstanceOf(dev.jadxmcp.model.StringMatch.class,
+				((List<?>) strings.get("items")).get(0));
+		assertNotNull(match.methodId());
+
+		dev.jadxmcp.model.XrefInfo xref = assertInstanceOf(dev.jadxmcp.model.XrefInfo.class,
+				registry.call("get_xrefs", Map.of("symbolType", "method", "id", FixtureApk.API_CLIENT_CALL_ID)));
+		assertNotNull(xref.outgoing());
+		assertTrue(xref.outgoingCount() >= 1);
+
+		ApkInfo ready = assertInstanceOf(ApkInfo.class, registry.call("get_apk_info", Map.of()));
+		assertTrue(ready.index().stringCount() > 0);
+		assertTrue(ready.index().edgeCount() > 0);
+	}
+
+	@Test
+	void disabledIndexKeepsPhase1Behavior() throws Exception {
+		jadx = new JadxService(IndexConfig.disabled());
+		jadx.load(FixtureApk.apk());
+		registry = new ToolRegistry(jadx);
+		ApkInfo info = assertInstanceOf(ApkInfo.class, registry.call("get_apk_info", Map.of()));
+		assertEquals(IndexState.DISABLED, info.index().state());
+		Map<?, ?> strings = (Map<?, ?>) registry.call("search_strings",
+				Map.of("query", "api-client-ready"));
+		dev.jadxmcp.model.StringMatch match = assertInstanceOf(dev.jadxmcp.model.StringMatch.class,
+				((List<?>) strings.get("items")).get(0));
+		assertNotNull(match.line()); // Phase 1 decompiled-scan shape
+		assertNull(match.methodId());
 	}
 
 	@Test

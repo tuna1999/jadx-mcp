@@ -13,6 +13,7 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import dev.jadxmcp.fixture.FixtureApk;
 import jadx.core.dex.nodes.ClassNode;
@@ -21,6 +22,9 @@ import jadx.core.dex.nodes.MethodNode;
 class JadxServiceTest {
 
 	private JadxService service;
+
+	@TempDir
+	Path indexDir;
 
 	@BeforeAll
 	static void apk() {
@@ -35,7 +39,7 @@ class JadxServiceTest {
 	}
 
 	private ApkSession load() {
-		service = new JadxService();
+		service = new JadxService(IndexConfig.of(indexDir));
 		return service.load(FixtureApk.apk());
 	}
 
@@ -49,7 +53,7 @@ class JadxServiceTest {
 
 	@Test
 	void missingFileFailsCleanly() {
-		service = new JadxService();
+		service = new JadxService(IndexConfig.of(indexDir));
 		JadxService.JadxServiceException e = assertThrows(JadxService.JadxServiceException.class,
 				() -> service.load(Path.of("does/not/exist.apk")));
 		assertEquals(dev.jadxmcp.model.ErrorCode.FILE_NOT_FOUND, e.code());
@@ -59,7 +63,7 @@ class JadxServiceTest {
 	void invalidFileFailsCleanly() throws Exception {
 		Path notAnApk = Files.createTempFile("jadx-mcp", ".apk");
 		Files.writeString(notAnApk, "this is definitely not a zip file");
-		service = new JadxService();
+		service = new JadxService(IndexConfig.of(indexDir));
 		JadxService.JadxServiceException e = assertThrows(JadxService.JadxServiceException.class,
 				() -> service.load(notAnApk));
 		assertEquals(dev.jadxmcp.model.ErrorCode.INVALID_INPUT_FILE, e.code());
@@ -132,7 +136,8 @@ class JadxServiceTest {
 		List<dev.jadxmcp.model.StringMatch> matches =
 				session.search().searchStrings("api.fixture.example.com", false, 20, 100);
 		assertTrue(matches.size() >= 1);
-		assertTrue(matches.get(0).className().contains("DataStore"));
+		assertTrue(matches.stream().anyMatch(m -> m.className().contains("DataStore")
+				|| m.className().contains("ApiClient")));
 	}
 
 	@Test

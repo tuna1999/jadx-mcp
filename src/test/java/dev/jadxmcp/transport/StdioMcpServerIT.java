@@ -100,7 +100,7 @@ class StdioMcpServerIT {
 	@Test
 	@Timeout(180)
 	void handshakeToolsAndToolCallWorkOverStdio() throws Exception {
-		start("--input", FixtureApk.apk().toString());
+		start("--input", FixtureApk.apk().toString(), "--index-dir", Path.of("build", "fixtures", "it-index").toString());
 		send("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{"
 				+ "\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},"
 				+ "\"clientInfo\":{\"name\":\"it\",\"version\":\"1.0\"}}}");
@@ -159,7 +159,7 @@ class StdioMcpServerIT {
 	@Test
 	@Timeout(60)
 	void processExitsWhenStdinCloses() throws Exception {
-		start("--input", FixtureApk.apk().toString());
+		start("--input", FixtureApk.apk().toString(), "--index-dir", Path.of("build", "fixtures", "it-index").toString());
 		send("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{"
 				+ "\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},"
 				+ "\"clientInfo\":{\"name\":\"it\",\"version\":\"1.0\"}}}");
