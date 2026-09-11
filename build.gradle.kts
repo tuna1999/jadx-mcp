@@ -56,6 +56,11 @@ application {
     mainClass = "dev.jadxmcp.Main"
 }
 
+// The plain jar would collide with fatJar's versioned output path; keep it distinct.
+tasks.jar {
+    archiveClassifier = "thin"
+}
+
 tasks.compileJava {
     options.release = 17
     options.encoding = "UTF-8"
