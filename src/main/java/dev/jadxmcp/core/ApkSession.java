@@ -23,20 +23,32 @@ public final class ApkSession implements AutoCloseable {
 	private final long sizeBytes;
 	private final Instant loadedAt;
 
+	private final IndexStore index;
 	private final SymbolResolver resolver;
+	private final ResourceTableIndex resourceTable;
 	private final CodeCache codeCache;
 	private final SearchService search;
 	private final XrefService xref;
 
 	public ApkSession(JadxDecompiler jadx, Path inputPath, long sizeBytes) {
+		this(jadx, inputPath, sizeBytes, null);
+	}
+
+	/** Session with an optional Phase 2 index store (null = Phase 1 services). */
+	public ApkSession(JadxDecompiler jadx, Path inputPath, long sizeBytes, IndexStore index) {
 		this.jadx = jadx;
 		this.inputPath = inputPath;
 		this.sizeBytes = sizeBytes;
 		this.loadedAt = Instant.now();
 		this.resolver = new SymbolResolver(jadx.getRoot());
-		this.codeCache = new JadxCodeCache(jadx);
-		this.search = new JadxSearchService(jadx.getRoot(), codeCache);
-		this.xref = new JadxXrefService(resolver);
+		this.resourceTable = ResourceTableIndex.decode(jadx, inputPath);
+		this.codeCache = index != null ? new IndexedCodeCache(new JadxCodeCache(jadx), index) : new JadxCodeCache(jadx);
+		this.search = index != null
+				? new IndexedSearchService(new JadxSearchService(jadx.getRoot(), codeCache), index)
+				: new JadxSearchService(jadx.getRoot(), codeCache);
+		this.xref = index != null ? new IndexedXrefService(new JadxXrefService(resolver), index)
+				: new JadxXrefService(resolver);
+		this.index = index;
 	}
 
 	public JadxDecompiler jadx() {
@@ -69,6 +81,16 @@ public final class ApkSession implements AutoCloseable {
 
 	public XrefService xref() {
 		return xref;
+	}
+
+	/** Phase 2 index store backing this session, or null when disabled. */
+	public IndexStore indexStore() {
+		return index;
+	}
+
+	/** Decoded resource table for numeric-id lookup (empty when absent). */
+	public ResourceTableIndex resourceTable() {
+		return resourceTable;
 	}
 
 	/** Top-level classes (without inner classes), in jadx order. */
@@ -106,5 +128,8 @@ public final class ApkSession implements AutoCloseable {
 	@Override
 	public void close() {
 		jadx.close();
+		if (index != null) {
+			index.close();
+		}
 	}
 }

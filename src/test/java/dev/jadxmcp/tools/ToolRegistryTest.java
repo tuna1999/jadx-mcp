@@ -3,6 +3,7 @@ package dev.jadxmcp.tools;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -214,5 +215,22 @@ class ToolRegistryTest {
 
 		assertEquals(ErrorCode.RESOURCE_NOT_FOUND, assertThrows(ToolException.class,
 				() -> registry.call("get_resource", Map.of("path", "no/such/file"))).code());
+	}
+
+	@Test
+	void resourceByNegativeIdBehaves() {
+		registry = loaded();
+		// fixture APK has no resources.arsc: any id must be RESOURCE_NOT_FOUND
+		assertEquals(ErrorCode.RESOURCE_NOT_FOUND, assertThrows(ToolException.class,
+				() -> registry.call("get_resource", Map.of("id", "0x7f0e0001"))).code());
+		assertEquals(ErrorCode.INVALID_ARGUMENT, assertThrows(ToolException.class,
+				() -> registry.call("get_resource", Map.of("maxBytes", 2000))).code());
+		assertEquals(ErrorCode.INVALID_ARGUMENT, assertThrows(ToolException.class,
+				() -> registry.call("get_resource", Map.of("path", "assets/notes.txt", "id", "0x1"))).code());
+		// entries carry no id when no resource table exists
+		Map<?, ?> list = (Map<?, ?>) registry.call("list_resources", Map.of("query", "notes"));
+		dev.jadxmcp.model.ResourceEntryInfo item = assertInstanceOf(dev.jadxmcp.model.ResourceEntryInfo.class,
+				((List<?>) list.get("items")).get(0));
+		assertNull(item.id());
 	}
 }

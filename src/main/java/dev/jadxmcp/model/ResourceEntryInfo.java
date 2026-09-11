@@ -7,5 +7,6 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 public record ResourceEntryInfo(
 		String name,
 		String deobfName,
-		String type) {
+		String type,
+		String id) {
 }

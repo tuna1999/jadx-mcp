@@ -10,6 +10,7 @@ import jadx.api.ResourceFile;
 import jadx.api.ResourceType;
 import jadx.core.xmlgen.ResContainer;
 import dev.jadxmcp.core.ApkSession;
+import dev.jadxmcp.core.ResourceTableIndex;
 import dev.jadxmcp.core.JadxService;
 import dev.jadxmcp.model.ErrorCode;
 import dev.jadxmcp.model.Page;
@@ -72,8 +73,8 @@ public final class ResourceTools {
 							.filter(r -> query == null || r.getOriginalName().toLowerCase(Locale.ROOT)
 									.contains(query.toLowerCase(Locale.ROOT)))
 							.filter(r -> typeF == null || r.getType() == typeF)
-							.map(r -> new ResourceEntryInfo(r.getOriginalName(), r.getDeobfName(),
-									r.getType().name()))
+						.map(r -> new ResourceEntryInfo(r.getOriginalName(), r.getDeobfName(),
+								r.getType().name(), resourceIdOf(session, r.getOriginalName())))
 							.toList();
 					int from = Math.min(offset, all.size());
 					int to = Math.min(offset + limit, all.size());
@@ -84,40 +85,119 @@ public final class ResourceTools {
 	private ToolDefinition getResource() {
 		return new ToolDefinition(
 				"get_resource",
-				"Content of one resource by its stable path inside the APK. Text resources (xml/arsc/manifest)" +
-						"are returned decoded; binary resources as base64, truncated at maxBytes.",
+				"Content of one resource addressed by its stable path inside the APK or by its numeric "
+						+ "resource id ('0x7f0e0001' or decimal). Text resources (xml/arsc/manifest) are returned "
+						+ "decoded; binary resources as base64, truncated at maxBytes; value-only resources "
+						+ "(e.g. strings) come back as kind 'value'.",
 				"""
 						{
 						  "type": "object",
 						  "properties": {
 						    "path": { "type": "string", "description": "Resource path as returned by list_resources, e.g. 'res/values/strings.xml'" },
+						    "id": { "type": "string", "description": "Numeric resource id, e.g. '0x7f0e0001' or decimal - alternative to path" },
 						    "maxBytes": { "type": "integer", "minimum": 1000, "maximum": 2000000, "default": 200000 }
-						  },
-						  "required": ["path"]
+						  }
 						}
 						""",
 				args -> {
 					Args a = Args.of(args);
-					String path = a.str("path");
+					String path = a.optStr("path");
+					String id = a.optStr("id");
+					if ((path == null) == (id == null)) {
+						throw new ToolException(ErrorCode.INVALID_ARGUMENT,
+								"exactly one of 'path' or 'id' is required");
+					}
 					long maxBytes = a.intOf("maxBytes", (int) DEFAULT_MAX_BYTES, 1000, (int) MAX_MAX_BYTES);
 					ApkSession session = jadx.requireSession();
-					ResourceFile res = session.resources().stream()
-							.filter(r -> r.getOriginalName().equals(path) || r.getDeobfName().equals(path))
-							.findFirst()
-							.orElseThrow(() -> new ToolException(ErrorCode.RESOURCE_NOT_FOUND,
-									"resource not found: " + path));
-					ResContainer container;
-					try {
-						container = res.loadContent();
-					} catch (Exception e) {
-						throw new ToolException(ErrorCode.INTERNAL_ERROR,
-								"failed to load resource " + path, String.valueOf(e.getMessage()));
-					}
-					if (container == null) {
-						throw new ToolException(ErrorCode.RESOURCE_NOT_FOUND, "resource has no content: " + path);
-					}
-					return contentOf(session, res, container, maxBytes);
+					return id != null
+							? byResourceId(session, id, maxBytes)
+							: byResourcePath(session, path, maxBytes);
 				});
+	}
+
+	private ResourceContent byResourcePath(ApkSession session, String path, long maxBytes) {
+		ResourceFile res = session.resources().stream()
+				.filter(r -> r.getOriginalName().equals(path) || r.getDeobfName().equals(path))
+				.findFirst()
+				.orElseThrow(() -> new ToolException(ErrorCode.RESOURCE_NOT_FOUND,
+						"resource not found: " + path));
+		ResContainer container;
+		try {
+			container = res.loadContent();
+		} catch (Exception e) {
+			throw new ToolException(ErrorCode.INTERNAL_ERROR,
+					"failed to load resource " + path, String.valueOf(e.getMessage()));
+		}
+		if (container == null) {
+			throw new ToolException(ErrorCode.RESOURCE_NOT_FOUND, "resource has no content: " + path);
+		}
+		return contentOf(session, res, container, maxBytes);
+	}
+
+	private ResourceContent byResourceId(ApkSession session, String id, long maxBytes) {
+		jadx.core.xmlgen.entry.ResourceEntry entry = session.resourceTable().findById(id);
+		if (entry == null) {
+			throw new ToolException(ErrorCode.RESOURCE_NOT_FOUND, "resource id not found: " + id);
+		}
+		// file-based resource (res/<type>[-config]/<key>.<ext>) -> return file content
+		ResourceFile file = session.resources().stream()
+				.filter(r -> matchesResPath(r.getOriginalName(), entry.getTypeName(), entry.getKeyName()))
+				.findFirst()
+				.orElse(null);
+		if (file != null) {
+			try {
+				ResContainer container = file.loadContent();
+				if (container != null) {
+					return contentOf(session, file, container, maxBytes);
+				}
+			} catch (Exception e) {
+				// fall through to the value representation
+			}
+		}
+		String name = "@" + entry.getTypeName() + "/" + entry.getKeyName();
+		String text = ResourceTableIndex.valueOf(entry);
+		if (text == null) {
+			text = name;
+		}
+		return new ResourceContent(name, entry.getTypeName(), "value",
+				text, null, text.length(), text.length(), false, (int) maxBytes);
+	}
+
+	private static boolean matchesResPath(String path, String typeName, String keyName) {
+		if (!path.startsWith("res/")) {
+			return false;
+		}
+		String[] parts = path.split("/");
+		if (parts.length != 3) {
+			return false;
+		}
+		String dir = parts[1];
+		if (!dir.equals(typeName) && !dir.startsWith(typeName + "-")) {
+			return false;
+		}
+		String file = parts[2];
+		int dot = file.indexOf('.');
+		String base = dot < 0 ? file : file.substring(0, dot);
+		return base.equals(keyName);
+	}
+
+	/** Hex id for a res/<type>[-config]/<key>.<ext> path, or null when unknown. */
+	private static String resourceIdOf(ApkSession session, String path) {
+		if (!path.startsWith("res/")) {
+			return null;
+		}
+		String[] parts = path.split("/");
+		if (parts.length != 3) {
+			return null;
+		}
+		String dir = parts[1];
+		int dash = dir.indexOf('-');
+		String typeName = dash < 0 ? dir : dir.substring(0, dash);
+		String file = parts[2];
+		int dot = file.indexOf('.');
+		String keyName = dot < 0 ? file : file.substring(0, dot);
+		Integer id = session.resourceTable().idOf(typeName, keyName);
+		return id == null ? null : "0x" + Integer.toUnsignedString(id, 16);
 	}
 
 	private ResourceContent contentOf(ApkSession session, ResourceFile res, ResContainer container, long maxBytes) {
