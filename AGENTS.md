@@ -107,3 +107,20 @@ JUnit 6 (Jupiter), 34 tests across 5 suites:
 Conventions: fixture-driven (constants in `FixtureApk`: `CRYPTO_UTIL_ID`, `ENCODE_METHOD_ID`, `API_ENDPOINT`); plain JUnit asserts; ITs reuse `StdioTestClient`/`HttpMcpClient` helpers. Any new tool must get a `ToolRegistryTest` case; any transport-visible change must keep `TransportConsistencyIT` green. Keep fixture classes free of lambdas/default methods (dexed with `--min-api 26`).
 
 CI (`.github/workflows/ci.yml`) additionally smoke-tests both transports against the packaged jar and requires ≥34 executed tests; releases (tags `v*`) publish `jadx-mcp-<v>.jar` + SHA-256 to GitHub Releases.
+
+## Versioning Policy (AI-decided)
+
+The AI assistant working on this repo **decides autonomously whether to bump the version** based on the nature of the changes — no version bump is automatic, and none should be requested from the user. Judge each completed change set against this scale:
+
+| Change | Bump |
+|---|---|
+| New MCP tool, new CLI flag, new DTO field, new transport capability | **minor** (`0.2.0` → `0.3.0`) |
+| Bug fix, error-message/wording fix, refactor with identical external behavior, test/CI/docs-only | **patch** (`0.2.0` → `0.2.1`), or **no bump** if nothing user-visible changed |
+| Breaking change to tool schemas, error codes, CLI syntax, exit codes, or DTO shapes | **major** (`0.2.0` → `1.0.0`) |
+
+Rules:
+
+- Decide at the END of a change set, after tests pass — bump only when the change is user/agent-visible (tool behavior, CLI, packaging). Internal-only refactors do not bump.
+- Apply via `-PappVersion=<new>` when building/committing the change (default fallback is `0.1.0` in `build.gradle.kts` — update the fallback too if the baseline moved).
+- `--version` output, jar filename, and GitHub Release artifacts must all agree; CI asserts this. After a bump, verify `java -jar build/libs/jadx-mcp-<v>.jar --version`.
+- Publishing a version = pushing a git tag `v<version>` (release workflow builds, verifies, and attaches jar + SHA-256). Only tag when the user asks for a release; version bumps in code are the AI's call.
