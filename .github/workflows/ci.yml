@@ -57,7 +57,7 @@ jobs:
 
       - name: Check --version output matches build version
         run: |
-          OUT=$(java -jar ${{ steps.jar.outputs.path }} --version)
+          OUT=$(java -jar ${{ steps.jar.outputs.path }} --version 2>&1)
           echo "--version: $OUT / expected ${{ steps.ver.outputs.version }}"
           test "$OUT" = "${{ steps.ver.outputs.version }}"
 

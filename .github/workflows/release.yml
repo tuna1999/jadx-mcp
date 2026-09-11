@@ -35,7 +35,7 @@ jobs:
         run: |
           JAR="build/libs/jadx-mcp-${{ steps.ver.outputs.version }}.jar"
           java -jar "$JAR" --help >/dev/null
-          test "$(java -jar "$JAR" --version)" = "${{ steps.ver.outputs.version }}"
+          test "$(java -jar "$JAR" --version 2>&1)" = "${{ steps.ver.outputs.version }}"
 
       - name: Prepare artifacts
         run: |
