@@ -22,7 +22,7 @@ public final class JadxXrefService implements XrefService {
 	}
 
 	@Override
-	public XrefInfo incoming(String symbolType, String symbolId, int limit) {
+	public XrefInfo xrefs(String symbolType, String symbolId, int limit) {
 		List<SymbolRef> all = new ArrayList<>();
 		SymbolRef symbol;
 		switch (symbolType) {
@@ -68,7 +68,7 @@ public final class JadxXrefService implements XrefService {
 		int total = all.size();
 		boolean truncated = total > limit;
 		List<SymbolRef> page = truncated ? new ArrayList<>(all.subList(0, limit)) : all;
-		return new XrefInfo(symbol, page, total, truncated ? true : null);
+		return new XrefInfo(symbol, page, total, truncated ? true : null, null, null, null);
 	}
 
 	private SymbolRef ref(ClassNode cls) {

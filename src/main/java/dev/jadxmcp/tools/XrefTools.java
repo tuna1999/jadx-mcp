@@ -25,8 +25,9 @@ public final class XrefTools {
 	private ToolDefinition getXrefs() {
 		return new ToolDefinition(
 				"get_xrefs",
-				"Incoming usages (xrefs) of a symbol. symbolType is 'class', 'method' or 'field'; "
-						+ "id is the stable DEX-style id. Outgoing xrefs may be added in a later phase.",
+				"Incoming and outgoing xrefs of a symbol. symbolType is 'class', 'method' or 'field'; "
+						+ "id is the stable DEX-style id. Outgoing edges come from the Phase 2 index and are "
+						+ "present once the index state is 'ready'; fields have no outgoing refs.",
 				"""
 						{
 						  "type": "object",
@@ -46,7 +47,7 @@ public final class XrefTools {
 					ApkSession session = jadx.requireSession();
 					XrefInfo info;
 					try {
-						info = session.xref().incoming(symbolType, id, limit);
+						info = session.xref().xrefs(symbolType, id, limit);
 					} catch (IllegalArgumentException e) {
 						throw new ToolException(ErrorCode.INVALID_ARGUMENT, e.getMessage());
 					}
