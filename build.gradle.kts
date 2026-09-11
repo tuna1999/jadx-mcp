@@ -42,6 +42,8 @@ dependencies {
     implementation("io.modelcontextprotocol.sdk:mcp:2.0.1")
     implementation("tools.jackson.core:jackson-databind:3.1.4")
 
+    implementation("org.xerial:sqlite-jdbc:3.53.4.0")
+
     implementation("org.eclipse.jetty:jetty-server:12.0.39")
     implementation("org.eclipse.jetty.ee10:jetty-ee10-servlet:12.0.39")
 
