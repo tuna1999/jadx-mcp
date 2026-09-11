@@ -123,4 +123,5 @@ Rules:
 - Decide at the END of a change set, after tests pass — bump only when the change is user/agent-visible (tool behavior, CLI, packaging). Internal-only refactors do not bump.
 - Apply via `-PappVersion=<new>` when building/committing the change (default fallback is `0.1.0` in `build.gradle.kts` — update the fallback too if the baseline moved).
 - `--version` output, jar filename, and GitHub Release artifacts must all agree; CI asserts this. After a bump, verify `java -jar build/libs/jadx-mcp-<v>.jar --version`.
-- Publishing a version = pushing a git tag `v<version>` (release workflow builds, verifies, and attaches jar + SHA-256). Only tag when the user asks for a release; version bumps in code are the AI's call.
+- **Auto-tagging**: `.githooks/post-commit` (enable once per clone: `git config core.hooksPath .githooks`) reads the version fallback in `build.gradle.kts` and tags `v<version>` automatically on the first commit that carries a new version. No manual `git tag` needed.
+- Publishing = `git push origin v<version>` (release workflow builds, verifies, attaches jar + SHA-256). Push the tag when the user asks for a release; version bumps and tag creation are the AI's call.

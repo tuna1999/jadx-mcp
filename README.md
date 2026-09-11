@@ -205,7 +205,10 @@ list_classes → get_class_outline → get_method_source → get_xrefs
   làm artifact `jadx-mcp-<version>` sau mỗi run thành công.
 
 ```bash
-git tag v0.1.0 && git push origin v0.1.0   # -> tạo release tự động
+git config core.hooksPath .githooks   # một lần sau khi clone
+# hook post-commit tự đánh tag v<version> khi version trong build.gradle.kts đổi
+# đẩy tag để phát hành:
+git push origin v0.1.0                # -> release tự động (jar + SHA-256)
 ```
 
 ## Tests
